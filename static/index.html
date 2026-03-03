@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aegis</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d0d0d;
+      color: #d4d4d4;
+      font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+      font-size: 14px;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      padding: 14px;
+    }
+
+    h1 { font-size: 1.05rem; letter-spacing: 0.12em; color: #7ec8e3; }
+
+    video {
+      width: 100%;
+      max-width: 480px;
+      aspect-ratio: 16/9;
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 4px;
+      object-fit: cover;
+    }
+
+    canvas { display: none; }
+
+    /* ── status / stats row ── */
+    .meta { font-size: 0.75rem; color: #555; min-height: 1.2em; }
+    .meta.connected { color: #4ade80; }
+    .meta.error     { color: #f87171; }
+
+    /* ── analysis panel ── */
+    #analysis-panel {
+      width: 100%;
+      max-width: 480px;
+      background: #111;
+      border: 1px solid #2a2a2a;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    #analysis-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 10px;
+      background: #161616;
+      border-bottom: 1px solid #2a2a2a;
+      font-size: 0.7rem;
+      color: #555;
+    }
+
+    #analysis-header span:first-child { color: #7ec8e3; letter-spacing: 0.08em; }
+
+    #analysis-body {
+      padding: 10px;
+      font-size: 0.8rem;
+      line-height: 1.55;
+      color: #c0c0c0;
+      white-space: pre-wrap;
+      min-height: 80px;
+      max-height: 260px;
+      overflow-y: auto;
+    }
+
+    #analysis-body.waiting { color: #444; font-style: italic; }
+
+    /* ── dot blink for "thinking" ── */
+    .blink {
+      display: inline-block;
+      animation: blink 1s step-start infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    button {
+      padding: 7px 18px;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      border: 1px solid #3a3a3a;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.82rem;
+      transition: background 0.12s;
+    }
+    button:hover    { background: #272727; }
+    button:disabled { opacity: 0.38; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <h1>AEGIS</h1>
+
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas"></canvas>
+
+  <p id="intake-status" class="meta">Idle</p>
+  <p id="stats"         class="meta"></p>
+  <button id="btn">Start Capture</button>
+
+  <!-- ── AI analysis panel ── -->
+  <div id="analysis-panel">
+    <div id="analysis-header">
+      <span>AI ANALYSIS</span>
+      <span id="analysis-ts">—</span>
+    </div>
+    <div id="analysis-body" class="waiting">Waiting for frames…</div>
+  </div>
+
+  <script>
+    "use strict";
+
+    /* ── DOM refs ── */
+    const video        = document.getElementById("video");
+    const canvas       = document.getElementById("canvas");
+    const ctx          = canvas.getContext("2d", { willReadFrequently: true });
+    const intakeStatus = document.getElementById("intake-status");
+    const statsEl      = document.getElementById("stats");
+    const btn          = document.getElementById("btn");
+    const analysisBody = document.getElementById("analysis-body");
+    const analysisTsEl = document.getElementById("analysis-ts");
+
+    /* ── constants ── */
+    const FRAME_INTERVAL_MS = 100;   // 10 FPS to server
+    const JPEG_QUALITY      = 0.72;
+
+    /* ── intake state ── */
+    let intakeWs   = null;
+    let intervalId = null;
+    let framesSent = 0;
+    let bytesTotal = 0;
+    let startTime  = 0;
+
+    /* ── analysis WebSocket (always connected) ── */
+    let analysisWs        = null;
+    let analysisReconnect = null;
+
+    /* ================================================================
+       Intake WebSocket — phone camera → server
+    ================================================================ */
+
+    function setIntakeStatus(msg, cls = "") {
+      intakeStatus.textContent = msg;
+      intakeStatus.className   = "meta " + cls;
+    }
+
+    function setStats(frames, bytes, elapsed) {
+      const fps = elapsed > 0 ? (frames / elapsed * 1000).toFixed(1) : "—";
+      statsEl.textContent = `${frames} frames · ${fps} fps · ${(bytes / 1024).toFixed(1)} KB`;
+    }
+
+    function sendFrame() {
+      if (!intakeWs || intakeWs.readyState !== WebSocket.OPEN) return;
+      if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA)  return;
+
+      if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+        canvas.width  = video.videoWidth;
+        canvas.height = video.videoHeight;
+      }
+      ctx.drawImage(video, 0, 0);
+
+      canvas.toBlob((blob) => {
+        if (!blob || !intakeWs || intakeWs.readyState !== WebSocket.OPEN) return;
+        blob.arrayBuffer().then((buf) => {
+          intakeWs.send(buf);
+          framesSent++;
+          bytesTotal += buf.byteLength;
+          setStats(framesSent, bytesTotal, Date.now() - startTime);
+        });
+      }, "image/jpeg", JPEG_QUALITY);
+    }
+
+    async function startCapture() {
+      btn.disabled = true;
+      setIntakeStatus("Requesting camera…");
+
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        });
+      } catch (err) {
+        setIntakeStatus(`Camera error: ${err.message}`, "error");
+        btn.textContent = "Start Capture";
+        btn.disabled = false;
+        return;
+      }
+
+      video.srcObject = stream;
+
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      intakeWs = new WebSocket(`${proto}://${location.host}/ws/intake`);
+      intakeWs.binaryType = "arraybuffer";
+
+      intakeWs.onopen = () => {
+        setIntakeStatus("Streaming", "connected");
+        btn.textContent = "Stop Capture";
+        btn.disabled    = false;
+        framesSent = bytesTotal = 0;
+        startTime  = Date.now();
+        intervalId = setInterval(sendFrame, FRAME_INTERVAL_MS);
+      };
+
+      intakeWs.onclose = () => {
+        stopCapture(true);
+        setIntakeStatus("Disconnected", "error");
+      };
+
+      intakeWs.onerror = () => setIntakeStatus("WebSocket error", "error");
+    }
+
+    function stopCapture(fromServer = false) {
+      clearInterval(intervalId);
+      intervalId = null;
+      if (intakeWs && intakeWs.readyState <= WebSocket.OPEN) intakeWs.close();
+      intakeWs = null;
+      const stream = video.srcObject;
+      if (stream) stream.getTracks().forEach((t) => t.stop());
+      video.srcObject = null;
+      if (!fromServer) setIntakeStatus("Stopped");
+      btn.textContent = "Start Capture";
+      btn.disabled    = false;
+    }
+
+    btn.addEventListener("click", () => {
+      if (intakeWs) stopCapture();
+      else { btn.textContent = "Starting…"; startCapture(); }
+    });
+
+    /* ================================================================
+       Analysis WebSocket — server AI results → display
+    ================================================================ */
+
+    function formatTs(iso) {
+      if (!iso) return "—";
+      const d = new Date(iso);
+      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
+
+    function showAnalysis(result) {
+      if (!result || !result.analysis) return;
+      analysisBody.classList.remove("waiting");
+      analysisBody.textContent = result.analysis;
+      analysisTsEl.textContent = formatTs(result.timestamp);
+    }
+
+    function showThinking() {
+      analysisBody.classList.add("waiting");
+      analysisBody.innerHTML = 'Analysing<span class="blink">…</span>';
+    }
+
+    function connectAnalysisWs() {
+      clearTimeout(analysisReconnect);
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      analysisWs = new WebSocket(`${proto}://${location.host}/ws/analysis`);
+
+      analysisWs.onopen = () => {
+        // Show "thinking" only if we have no cached result yet.
+        if (analysisBody.classList.contains("waiting")) showThinking();
+      };
+
+      analysisWs.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "keepalive") return;   // ignore heartbeats
+        showAnalysis(msg);
+      };
+
+      analysisWs.onclose = () => {
+        // Auto-reconnect after 3 s (server restart, network blip, etc.).
+        analysisReconnect = setTimeout(connectAnalysisWs, 3000);
+      };
+
+      analysisWs.onerror = () => analysisWs.close();
+    }
+
+    // Connect immediately on page load — analysis works regardless of
+    // whether the intake WS is open.
+    connectAnalysisWs();
+  </script>
+</body>
+</html>
