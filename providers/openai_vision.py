@@ -43,17 +43,23 @@ class OpenAIVisionProvider(BaseAIProvider):
         self._model = settings.OPENAI_MODEL
         self._system_prompt = settings.ANALYSIS_SYSTEM_PROMPT
 
-    async def analyze_frame(self, frame: np.ndarray) -> dict:
+    async def analyze_frame(
+        self,
+        frame: np.ndarray,
+        system_prompt: str | None = None,
+    ) -> dict:
         b64_str = _encode_frame_b64(frame)
         # OpenAI vision requires a data URL for base64 images
         data_url = f"data:image/jpeg;base64,{b64_str}"
+        # Use profile-supplied system prompt when available, else fall back to default.
+        effective_prompt = system_prompt if system_prompt is not None else self._system_prompt
 
         response = await self._client.chat.completions.create(
             model=self._model,
             # json_object mode guarantees parseable JSON without markdown fences
             response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": self._system_prompt},
+                {"role": "system", "content": effective_prompt},
                 {
                     "role": "user",
                     "content": [

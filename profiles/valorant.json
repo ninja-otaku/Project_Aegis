@@ -1,0 +1,31 @@
+{
+  "_comment": [
+    "Coordinates are percentages [0.0–1.0] of frame width/height — resolution-independent.",
+    "roi_strategy options: full_frame | horizontal_stack | vertical_stack | grid",
+    "frame_diff_threshold overrides the global .env value for this game.",
+    "If roi_crops is empty or roi_strategy is full_frame, the full frame is sent to the AI.",
+    "Valorant UI layout measured from standard 1080p (1920x1080).",
+    "Minimap: top-left corner (~0%–18% x, ~0%–20% y).",
+    "Health/shield: bottom-center bar (~38%–62% x, ~91%–100% y).",
+    "Abilities: bottom-center row above health (~38%–62% x, ~82%–91% y).",
+    "Tune coordinates against a real screenshot with browser DevTools or a pixel ruler."
+  ],
+  "game_name": "Valorant",
+  "system_prompt": "You are a Valorant tactics coach. Analyze the minimap for enemy positions, the health/shield bar for survivability, and ability icons for cooldown state. Output strictly JSON with keys: game_state, threats, recommendation, confidence. Keep recommendation under 15 words.",
+  "frame_diff_threshold": 0.025,
+  "roi_strategy": "horizontal_stack",
+  "roi_crops": {
+    "minimap": {
+      "x": 0.0, "y": 0.0, "w": 0.18, "h": 0.20,
+      "label": "Minimap"
+    },
+    "health_shield": {
+      "x": 0.38, "y": 0.91, "w": 0.24, "h": 0.09,
+      "label": "Health/Shield"
+    },
+    "abilities": {
+      "x": 0.38, "y": 0.82, "w": 0.24, "h": 0.09,
+      "label": "Abilities"
+    }
+  }
+}

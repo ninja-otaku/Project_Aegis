@@ -13,3 +13,6 @@ ollama>=0.2.0                # AI_PROVIDER=ollama  (also requires Ollama running
 # Optional features
 pyttsx3>=2.90                # TTS_ENABLED=true
 trustme>=0.9                 # for scripts/generate_cert.py (TLS setup)
+
+# Tests
+pytest>=8.0                  # run: pytest tests/

@@ -1,0 +1,26 @@
+{
+  "_comment": [
+    "Coordinates are percentages [0.0–1.0] of frame width/height — resolution-independent.",
+    "roi_strategy options: full_frame | horizontal_stack | vertical_stack | grid",
+    "frame_diff_threshold overrides the global .env value for this game.",
+    "If roi_crops is empty or roi_strategy is full_frame, the full frame is sent to the AI.",
+    "LoL UI layout measured from standard 1080p (1920x1080).",
+    "Minimap: bottom-right corner (~82%–100% x, ~75%–100% y).",
+    "Player stats: bottom-center bar (~35%–65% x, ~88%–100% y).",
+    "Tune coordinates against a real screenshot with browser DevTools or a pixel ruler."
+  ],
+  "game_name": "League of Legends",
+  "system_prompt": "You are a high-level League of Legends macro coach. Analyze the minimap for enemy positions and the player stats for health/mana state. Output strictly JSON with keys: game_state, threats, recommendation, confidence. Keep recommendation under 15 words for voice readout.",
+  "frame_diff_threshold": 0.03,
+  "roi_strategy": "horizontal_stack",
+  "roi_crops": {
+    "minimap": {
+      "x": 0.82, "y": 0.75, "w": 0.18, "h": 0.25,
+      "label": "Minimap"
+    },
+    "player_stats": {
+      "x": 0.35, "y": 0.88, "w": 0.30, "h": 0.12,
+      "label": "Health/Mana"
+    }
+  }
+}

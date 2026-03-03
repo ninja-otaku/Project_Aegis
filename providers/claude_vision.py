@@ -71,15 +71,21 @@ class ClaudeVisionProvider(BaseAIProvider):
         self._model = model
         self._system_prompt = system_prompt
 
-    async def analyze_frame(self, frame: np.ndarray) -> dict:
+    async def analyze_frame(
+        self,
+        frame: np.ndarray,
+        system_prompt: str | None = None,
+    ) -> dict:
         """Encode frame, call Claude vision, return structured analysis dict."""
         image_b64 = _encode_frame(frame)
+        # Use profile-supplied system prompt when available, else fall back to default.
+        effective_prompt = system_prompt if system_prompt is not None else self._system_prompt
 
         async with self._client.messages.stream(
             model=self._model,
             max_tokens=2048,
             thinking={"type": "adaptive"},
-            system=self._system_prompt,
+            system=effective_prompt,
             output_config={"format": {"type": "json_schema", "json_schema": {"name": "game_analysis", "schema": _ANALYSIS_SCHEMA}}},
             messages=[{
                 "role": "user",

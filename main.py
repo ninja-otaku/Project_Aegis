@@ -5,9 +5,10 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from config import IntakeMode, settings
 from engine import FrameProcessor, TTSEngine
@@ -87,7 +88,7 @@ async def lifespan(app: FastAPI):
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Project Aegis", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="Project Aegis", version="0.5.0", lifespan=lifespan)
 
 _STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
@@ -132,6 +133,52 @@ async def analysis() -> JSONResponse:
 async def history() -> JSONResponse:
     """All retained analysis results, newest first."""
     return JSONResponse({"history": processor.get_history()})
+
+
+# ---------------------------------------------------------------------------
+# Routes — game profiles
+# ---------------------------------------------------------------------------
+
+@app.get("/profiles")
+async def list_profiles() -> JSONResponse:
+    """List available game profiles and report the active one.
+
+    Scans PROFILES_DIR for *.json files at request time so newly dropped-in
+    profiles are visible without a server restart.
+    """
+    profiles_dir = Path(settings.PROFILES_DIR)
+    available = sorted(p.stem for p in profiles_dir.glob("*.json")) if profiles_dir.is_dir() else []
+    return JSONResponse({
+        "active": processor.get_active_profile(),
+        "available": available,
+    })
+
+
+class _ActivateRequest(BaseModel):
+    profile: str
+
+
+@app.post("/profiles/activate")
+async def activate_profile(body: _ActivateRequest) -> JSONResponse:
+    """Hot-reload a named profile without restarting the server.
+
+    The processor immediately picks up the new system prompt, ROI strategy,
+    and frame-diff threshold.  Returns the name of the profile that was
+    actually loaded (may differ if the requested profile was not found and
+    default.json was used as fallback).
+    """
+    profiles_dir = Path(settings.PROFILES_DIR)
+    # Validate before handing off to the processor so we can return a clear 404.
+    candidate = profiles_dir / f"{body.profile}.json"
+    if not candidate.exists():
+        # Let the processor fall back to default, but still tell the caller.
+        loaded = processor.reload_profile(body.profile)
+        return JSONResponse(
+            {"active": loaded, "warning": f"Profile '{body.profile}' not found — loaded default."},
+            status_code=200,
+        )
+    loaded = processor.reload_profile(body.profile)
+    return JSONResponse({"active": loaded})
 
 
 # ---------------------------------------------------------------------------

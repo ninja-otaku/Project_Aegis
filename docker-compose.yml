@@ -1,0 +1,42 @@
+services:
+
+  # ── Aegis server ────────────────────────────────────────────────────────────
+  aegis:
+    build: .
+    ports:
+      - "8765:8765"
+    env_file:
+      - .env          # never committed — copy from .env.example
+    volumes:
+      # Mount profiles/ so you can add / edit game profiles without rebuilding.
+      - ./profiles:/app/profiles:ro
+      # TLS: if TLS_ENABLED=true, mount your generated certs here.
+      # Generate first:  python scripts/generate_cert.py
+      # - ./certs:/app/certs:ro
+    restart: unless-stopped
+    depends_on:
+      - ollama
+
+  # ── Local Ollama instance (free, offline inference) ─────────────────────────
+  # Set AI_PROVIDER=ollama in .env to use this service.
+  # Pull the model first (one-time, ~4 GB):
+  #   docker-compose run --rm ollama ollama pull llava
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama   # persist downloaded models across restarts
+    restart: unless-stopped
+    # GPU passthrough: uncomment the deploy block below for NVIDIA GPUs.
+    # Requires nvidia-container-toolkit installed on the host.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  ollama_data:

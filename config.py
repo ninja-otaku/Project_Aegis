@@ -67,11 +67,22 @@ class Settings(BaseSettings):
     TLS_CERT_PATH: str = "certs/cert.pem"
     TLS_KEY_PATH: str = "certs/key.pem"
 
+    # ── Error handling ────────────────────────────────────────────────────────
+    # Seconds to wait before retrying a rate-limited provider call (one retry).
+    RATE_LIMIT_RETRY_SECONDS: int = 5
+
     # ── TTS ───────────────────────────────────────────────────────────────────
     TTS_ENABLED: bool = False
 
     # ── History ───────────────────────────────────────────────────────────────
     HISTORY_MAX_ENTRIES: int = 50
+
+    # ── Game profiles ─────────────────────────────────────────────────────────
+    # Name of the active profile JSON (without .json extension).
+    # Drop any .json file into PROFILES_DIR to add a new game — no code changes.
+    ACTIVE_PROFILE: str = "default"
+    # Directory that contains game profile JSON files.
+    PROFILES_DIR: str = "profiles"
 
     model_config = SettingsConfigDict(
         env_file=".env",

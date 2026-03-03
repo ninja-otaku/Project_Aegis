@@ -147,6 +147,8 @@ To remove the browser warning entirely, install `certs/ca.pem` as a trusted CA o
 | `GET /history` | All retained analyses, newest first |
 | `WS /ws/intake` | Binary JPEG frame ingestion (phone mode) |
 | `WS /ws/analysis` | Real-time structured analysis stream |
+| `GET /profiles` | List available profiles and active profile |
+| `POST /profiles/activate` | Hot-reload a profile `{"profile": "valorant"}` |
 
 ---
 
@@ -177,6 +179,85 @@ To remove the browser warning entirely, install `certs/ca.pem` as a trusted CA o
 | `TLS_KEY_PATH` | `certs/key.pem` | Path to TLS private key |
 | `TTS_ENABLED` | `false` | Speak recommendations aloud (pyttsx3) |
 | `HISTORY_MAX_ENTRIES` | `50` | Number of past analyses to retain |
+| `RATE_LIMIT_RETRY_SECONDS` | `5` | Wait time before retrying a rate-limited call |
+| `ACTIVE_PROFILE` | `default` | Game profile name (without `.json`) |
+| `PROFILES_DIR` | `profiles` | Directory containing game profile JSON files |
+
+---
+
+## Game Profiles
+
+Drop a `.json` file into `profiles/` to teach Aegis how to analyse a specific game — no code changes required.
+
+**Schema**
+
+```json
+{
+  "game_name": "My Game",
+  "system_prompt": "You are a <game> coach. Output JSON: game_state, threats, recommendation, confidence.",
+  "frame_diff_threshold": 0.02,
+  "roi_strategy": "full_frame",
+  "roi_crops": {
+    "minimap": { "x": 0.82, "y": 0.75, "w": 0.18, "h": 0.25, "label": "Minimap" }
+  }
+}
+```
+
+- **Coordinates** are percentages `[0.0–1.0]` of frame width/height — fully resolution-independent.
+- **`roi_strategy`** — `full_frame` (no crop) · `horizontal_stack` · `vertical_stack` · `grid` (2×2)
+- **`frame_diff_threshold`** — overrides the global `.env` value for this game
+- If `roi_crops` is empty or strategy is `full_frame`, the whole frame is sent to the AI
+
+**Built-in profiles**
+
+| Profile | Strategy | Crops |
+|---|---|---|
+| `default` | `full_frame` | None — full screen |
+| `league_of_legends` | `horizontal_stack` | Minimap + Health/Mana bar |
+| `valorant` | `horizontal_stack` | Minimap + Health/Shield + Abilities |
+
+**Activate a profile**
+
+```bash
+# Via .env (requires restart)
+ACTIVE_PROFILE=valorant
+
+# Or hot-reload at runtime (no restart)
+curl -X POST http://localhost:8765/profiles/activate \
+  -H "Content-Type: application/json" \
+  -d '{"profile": "valorant"}'
+```
+
+> **Tip:** To measure ROI coordinates, take a screenshot of your game at your native resolution, open it in browser DevTools or any image editor, and read the pixel positions of the UI element you want to crop. Divide by frame width/height to get percentages.
+
+---
+
+## Docker Setup
+
+```bash
+# Pull the LLaVA model first (one-time, ~4 GB) — only needed for AI_PROVIDER=ollama
+docker-compose run --rm ollama ollama pull llava
+
+# Start Aegis + Ollama
+docker-compose up -d
+
+# Open http://<server-ip>:8765 on your phone
+```
+
+Game profiles are mounted as a read-only volume — add or edit `.json` files in `profiles/` and hit `POST /profiles/activate` without rebuilding.
+
+**TLS with Docker:** Generate certs first (`python scripts/generate_cert.py`), then uncomment the `certs` volume mount in `docker-compose.yml` and set `TLS_ENABLED=true` in `.env`.
+
+---
+
+## Running Tests
+
+```bash
+pip install pytest
+pytest tests/
+```
+
+Tests use mocks — no API keys or hardware required.
 
 ---
 
@@ -184,7 +265,7 @@ To remove the browser warning entirely, install `certs/ca.pem` as a trusted CA o
 
 **New intake source** — subclass `BaseVideoIntake` in `intake/`, implement `start()`, `stop()`, `get_latest_frame()`.
 
-**New AI provider** — subclass `BaseAIProvider` in `providers/`, implement `async analyze_frame(frame) -> dict`. The dict must contain `game_state`, `threats`, `recommendation`, `confidence`.
+**New AI provider** — subclass `BaseAIProvider` in `providers/`, implement `async analyze_frame(frame, system_prompt=None) -> dict`. The dict must contain `game_state`, `threats`, `recommendation`, `confidence`.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for code templates and a full checklist.
 
@@ -192,8 +273,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for code templates and a full checklist.
 
 ## Roadmap
 
-- Per-game system prompt profiles (load a `.prompt` file by game name)
-- ROI cropping — focus analysis on minimap / health bar / ammo counter
 - Additional providers: Mistral Vision, Groq (LLaVA), Gemma via Ollama
 - Aegis II: mobile-native companion app (React Native) replacing the browser frontend
 

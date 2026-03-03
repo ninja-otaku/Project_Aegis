@@ -47,15 +47,21 @@ class OllamaVisionProvider(BaseAIProvider):
         self._model = settings.OLLAMA_MODEL
         self._system_prompt = settings.ANALYSIS_SYSTEM_PROMPT
 
-    async def analyze_frame(self, frame: np.ndarray) -> dict:
+    async def analyze_frame(
+        self,
+        frame: np.ndarray,
+        system_prompt: str | None = None,
+    ) -> dict:
         b64_str = _encode_frame_b64(frame)
+        # Use profile-supplied system prompt when available, else fall back to default.
+        effective_prompt = system_prompt if system_prompt is not None else self._system_prompt
 
         # Ollama's chat API accepts base64 image strings in the images field.
         # The system role sets analysis context; user role carries the image.
         response = await self._client.chat(
             model=self._model,
             messages=[
-                {"role": "system", "content": self._system_prompt},
+                {"role": "system", "content": effective_prompt},
                 {
                     "role": "user",
                     "content": "Analyse this game frame. Return valid JSON only.",

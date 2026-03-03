@@ -45,14 +45,23 @@ class GeminiVisionProvider(BaseAIProvider):
             system_instruction=settings.ANALYSIS_SYSTEM_PROMPT,
         )
 
-    async def analyze_frame(self, frame: np.ndarray) -> dict:
+    async def analyze_frame(
+        self,
+        frame: np.ndarray,
+        system_prompt: str | None = None,
+    ) -> dict:
         jpeg_bytes = _encode_frame_bytes(frame)
 
-        # Pass image as inline data + a short user prompt.
-        # The system_instruction already carries the full analysis brief.
         image_part = {"mime_type": "image/jpeg", "data": jpeg_bytes}
+        # Gemini's system_instruction is baked into the model at construction time.
+        # For a per-call override from a game profile, prepend it to the user message.
+        if system_prompt is not None:
+            prompt_text = f"[System context: {system_prompt}]\n\nAnalyse this game frame. Return valid JSON only."
+        else:
+            # Fall back to the system_instruction set on the model in __init__.
+            prompt_text = "Analyse this game frame. Return valid JSON only."
         response = await self._model.generate_content_async(
-            [image_part, "Analyse this game frame. Return valid JSON only."]
+            [image_part, prompt_text]
         )
 
         raw = (response.text or "").strip()

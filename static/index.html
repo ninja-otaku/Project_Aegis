@@ -168,9 +168,65 @@
     }
     button:hover    { background: #272727; }
     button:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    /* ── status indicator (persistent dot, top-right) ── */
+    #status-indicator {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      z-index: 200;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    #status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--muted); /* grey = not yet connected */
+      transition: background 0.3s;
+      flex-shrink: 0;
+    }
+    #status-dot.ok         { background: var(--green);  }
+    #status-dot.rate_limit { background: var(--yellow); }
+    #status-dot.error      { background: var(--red);    }
+
+    /* ── toast notifications ── */
+    #toast-container {
+      position: fixed;
+      top: 28px; /* below the status dot */
+      right: 10px;
+      z-index: 200;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-width: 280px;
+      pointer-events: none; /* never block the analysis panel */
+    }
+    .toast {
+      padding: 7px 10px;
+      border-radius: 4px;
+      font-size: 0.72rem;
+      line-height: 1.4;
+      animation: toast-in 0.18s ease;
+    }
+    .toast.error      { background: #2a0505; border: 1px solid var(--red);    color: var(--red);    }
+    .toast.rate_limit { background: #2a1f00; border: 1px solid var(--yellow); color: var(--yellow); }
+    .toast .t-msg     { display: block; }
+    .toast .t-badge   { display: block; font-size: 0.62rem; opacity: 0.6; margin-top: 2px; }
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateX(8px); }
+      to   { opacity: 1; transform: translateX(0);   }
+    }
   </style>
 </head>
 <body>
+  <!-- ── Persistent status indicator + toast area (fixed, top-right) ── -->
+  <div id="status-indicator">
+    <span id="status-dot" title="Analysis status"></span>
+  </div>
+  <div id="toast-container"></div>
+
   <h1>AEGIS</h1>
 
   <video id="video" autoplay playsinline muted></video>
@@ -408,6 +464,29 @@
     }
 
     /* ================================================================
+       Status dot + toast helpers
+    ================================================================ */
+
+    const statusDot = document.getElementById("status-dot");
+    const toastContainer = document.getElementById("toast-container");
+    const TOAST_DURATION_MS = 5000;
+
+    function setStatus(state /* "ok" | "rate_limit" | "error" */) {
+      statusDot.className = state;
+    }
+
+    function showToast(message, type /* "error" | "rate_limit" */, provider) {
+      const el = document.createElement("div");
+      el.className = `toast ${type}`;
+      el.innerHTML =
+        `<span class="t-msg">${message}</span>` +
+        (provider ? `<span class="t-badge">[${provider}]</span>` : "");
+      toastContainer.appendChild(el);
+      // Auto-dismiss after TOAST_DURATION_MS.
+      setTimeout(() => el.remove(), TOAST_DURATION_MS);
+    }
+
+    /* ================================================================
        Analysis WebSocket
     ================================================================ */
 
@@ -419,10 +498,28 @@
       analysisWs.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
         if (msg.type === "keepalive") return;
+
+        // ── Error payloads from the backend ──────────────────────────
+        if (msg.status === "error") {
+          if (msg.error_type === "rate_limit") {
+            // Yellow toast for rate limits — a retry is already in flight.
+            setStatus("rate_limit");
+            showToast(msg.message, "rate_limit", msg.provider);
+          } else {
+            // Red toast for all other errors.
+            setStatus("error");
+            showToast(msg.message, "error", msg.provider);
+          }
+          return; // do not update the analysis panel with an error payload
+        }
+
+        // ── Normal analysis result ────────────────────────────────────
+        setStatus("ok");
         renderAnalysis(msg);
         prependHistory(msg);
       };
 
+      analysisWs.onopen = () => setStatus("ok");
       analysisWs.onclose = () => {
         analysisReconnect = setTimeout(connectAnalysisWs, 3000);
       };

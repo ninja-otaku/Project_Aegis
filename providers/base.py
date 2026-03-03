@@ -13,13 +13,20 @@ class BaseAIProvider(ABC):
     """
 
     @abstractmethod
-    async def analyze_frame(self, frame: np.ndarray) -> dict:
+    async def analyze_frame(
+        self,
+        frame: np.ndarray,
+        system_prompt: str | None = None,
+    ) -> dict:
         """Analyse a single frame and return a structured result dict.
 
         Args:
             frame: A numpy ndarray — either grayscale (H, W) from
                    PhoneBrowserIntake or BGR (H, W, 3) from
                    CaptureCardIntake.
+            system_prompt: Optional per-call system prompt override.
+                   When provided (e.g. from a game profile), implementations
+                   should use it in place of their stored default prompt.
 
         Returns:
             A dict with at minimum the following keys:
