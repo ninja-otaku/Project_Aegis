@@ -1,3 +1,4 @@
+![CI](https://github.com/ninja-otaku/Project_Aegis/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)
 ![contributions welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg)
@@ -33,6 +34,8 @@ Because Aegis runs on a **separate machine** and only passively observes the scr
 | `gemini` | `gemini-1.5-flash` | Google API key | Fast, cost-effective |
 | `openai` | `gpt-4o-mini` | OpenAI API key | Widely available |
 | `ollama` | `llava` | Ollama running locally | Free, fully offline |
+| `mistral` | `pixtral-12b-2409` | Mistral API key | Pixtral multimodal |
+| `groq` | `llama-3.2-11b-vision-preview` | Groq API key | Fastest inference |
 
 Set `AI_PROVIDER` in `.env` to switch. Only install the SDK for the provider you use.
 
@@ -170,6 +173,10 @@ To remove the browser warning entirely, install `certs/ca.pem` as a trusted CA o
 | `OPENAI_MODEL` | `gpt-4o-mini` | OpenAI model string |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
 | `OLLAMA_MODEL` | `llava` | Ollama model name |
+| `MISTRAL_API_KEY` | — | Required for `mistral` provider |
+| `MISTRAL_MODEL` | `pixtral-12b-2409` | Mistral model string |
+| `GROQ_API_KEY` | — | Required for `groq` provider |
+| `GROQ_MODEL` | `llama-3.2-11b-vision-preview` | Groq model string |
 | `ANALYSIS_INTERVAL_MS` | `2000` | AI call frequency (ms) |
 | `ANALYSIS_SYSTEM_PROMPT` | *(see .env.example)* | System prompt (game-specific tuning) |
 | `FRAME_DIFF_ENABLED` | `true` | Skip API call when scene unchanged |

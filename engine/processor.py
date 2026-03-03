@@ -295,9 +295,15 @@ class FrameProcessor:
                     cropped, system_prompt=self._profile_system_prompt
                 )
             except anthropic.AuthenticationError:
-                logger.error(
-                    "ANTHROPIC_API_KEY is missing or invalid. "
-                    "Set it in .env and restart.  Processor stopping."
+                # Broadcast an error toast so the frontend shows a red message
+                # instead of going silently stale, then stop the loop.
+                msg = (
+                    "ANTHROPIC_API_KEY is missing or invalid — "
+                    "set it in .env and restart."
+                )
+                logger.error(msg)
+                self._notify_subscribers(
+                    self._make_error_payload("provider_error", msg)
                 )
                 return
             except asyncio.TimeoutError:

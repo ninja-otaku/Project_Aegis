@@ -38,6 +38,12 @@ def _build_provider() -> BaseAIProvider:
     elif settings.AI_PROVIDER == "ollama":
         from providers.ollama_vision import OllamaVisionProvider
         return OllamaVisionProvider()
+    elif settings.AI_PROVIDER == "mistral":
+        from providers.mistral_vision import MistralVisionProvider
+        return MistralVisionProvider()
+    elif settings.AI_PROVIDER == "groq":
+        from providers.groq_vision import GroqVisionProvider
+        return GroqVisionProvider()
     else:  # default: claude
         from providers.claude_vision import ClaudeVisionProvider
         return ClaudeVisionProvider(

@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     PHONE_COMPRESS_QUALITY: int = 70
 
     # ── AI provider ───────────────────────────────────────────────────────────
-    # Which provider to use: claude | gemini | openai | ollama
+    # Which provider to use: claude | gemini | openai | ollama | mistral | groq
     AI_PROVIDER: str = "claude"
 
     # Claude (Anthropic) — ANTHROPIC_API_KEY is read by the SDK from env
@@ -39,6 +39,14 @@ class Settings(BaseSettings):
     # Ollama (local, no API key required — run: ollama pull llava)
     OLLAMA_HOST: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "llava"
+
+    # Mistral (pixtral-12b) — get key at console.mistral.ai
+    MISTRAL_API_KEY: str = ""
+    MISTRAL_MODEL: str = "pixtral-12b-2409"
+
+    # Groq — get key at console.groq.com
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.2-11b-vision-preview"
 
     # How often the frame processor calls the AI provider (milliseconds).
     # Lower = more responsive, higher = cheaper.

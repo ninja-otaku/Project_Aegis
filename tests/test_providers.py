@@ -47,15 +47,28 @@ def test_ollama_provider_is_subclass():
     assert issubclass(OllamaVisionProvider, BaseAIProvider)
 
 
+def test_mistral_provider_is_subclass():
+    from providers.mistral_vision import MistralVisionProvider
+    assert issubclass(MistralVisionProvider, BaseAIProvider)
+
+
+def test_groq_provider_is_subclass():
+    from providers.groq_vision import GroqVisionProvider
+    assert issubclass(GroqVisionProvider, BaseAIProvider)
+
+
 def test_all_providers_have_analyze_frame():
     """Each provider must expose the analyze_frame coroutine method."""
     from providers.claude_vision import ClaudeVisionProvider
     from providers.gemini_vision import GeminiVisionProvider
     from providers.openai_vision import OpenAIVisionProvider
     from providers.ollama_vision import OllamaVisionProvider
+    from providers.mistral_vision import MistralVisionProvider
+    from providers.groq_vision import GroqVisionProvider
 
     for cls in (ClaudeVisionProvider, GeminiVisionProvider,
-                OpenAIVisionProvider, OllamaVisionProvider):
+                OpenAIVisionProvider, OllamaVisionProvider,
+                MistralVisionProvider, GroqVisionProvider):
         assert callable(getattr(cls, "analyze_frame", None)), (
             f"{cls.__name__} is missing analyze_frame()"
         )
@@ -227,6 +240,7 @@ def test_openai_provider_propagates_sdk_exceptions():
 # Gemini — exception propagation (patched settings + SDK)
 # ---------------------------------------------------------------------------
 
+
 def test_gemini_provider_propagates_sdk_exceptions():
     """GeminiVisionProvider must propagate SDK exceptions without wrapping."""
 
@@ -253,6 +267,82 @@ def test_gemini_provider_propagates_sdk_exceptions():
 
             original_exc = RuntimeError("gemini api error")
             provider._model.generate_content_async = AsyncMock(side_effect=original_exc)
+
+            caught = None
+            try:
+                await provider.analyze_frame(_blank_frame())
+            except Exception as exc:
+                caught = exc
+
+            assert caught is original_exc
+            assert type(caught) is not Exception
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Mistral — exception propagation (patched settings + SDK)
+# ---------------------------------------------------------------------------
+
+def test_mistral_provider_propagates_sdk_exceptions():
+    """MistralVisionProvider must propagate SDK exceptions without wrapping."""
+
+    async def run():
+        import config
+
+        fake_settings = config.Settings(MISTRAL_API_KEY="fake-key")
+
+        mock_mistral = MagicMock()
+        mock_client = MagicMock()
+        mock_mistral.Mistral.return_value = mock_client
+
+        with patch.dict(sys.modules, {"mistralai": mock_mistral}), \
+             patch("config.settings", fake_settings):
+            if "providers.mistral_vision" in sys.modules:
+                del sys.modules["providers.mistral_vision"]
+            from providers.mistral_vision import MistralVisionProvider
+            provider = MistralVisionProvider()
+
+            original_exc = RuntimeError("mistral api error")
+            provider._client.chat.complete_async = AsyncMock(side_effect=original_exc)
+
+            caught = None
+            try:
+                await provider.analyze_frame(_blank_frame())
+            except Exception as exc:
+                caught = exc
+
+            assert caught is original_exc
+            assert type(caught) is not Exception
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Groq — exception propagation (patched settings + SDK)
+# ---------------------------------------------------------------------------
+
+def test_groq_provider_propagates_sdk_exceptions():
+    """GroqVisionProvider must propagate SDK exceptions without wrapping."""
+
+    async def run():
+        import config
+
+        fake_settings = config.Settings(GROQ_API_KEY="fake-key")
+
+        mock_groq = MagicMock()
+        mock_client = MagicMock()
+        mock_groq.AsyncGroq.return_value = mock_client
+
+        with patch.dict(sys.modules, {"groq": mock_groq}), \
+             patch("config.settings", fake_settings):
+            if "providers.groq_vision" in sys.modules:
+                del sys.modules["providers.groq_vision"]
+            from providers.groq_vision import GroqVisionProvider
+            provider = GroqVisionProvider()
+
+            original_exc = RuntimeError("groq api error")
+            provider._client.chat.completions.create = AsyncMock(side_effect=original_exc)
 
             caught = None
             try:
