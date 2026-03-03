@@ -1,12 +1,16 @@
 import asyncio
 import logging
+from collections import deque
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import anthropic
 
 from intake.base import BaseVideoIntake
 from providers.base import BaseAIProvider
+
+if TYPE_CHECKING:
+    from engine.tts import TTSEngine
 
 logger = logging.getLogger(__name__)
 
@@ -16,16 +20,19 @@ class FrameProcessor:
 
     A single asyncio background task wakes every ``interval_ms`` milliseconds,
     grabs the latest frame from the intake source, and dispatches it to the AI
-    provider.  The result is stored in a single-slot cache (``_latest``) and
-    pushed to all active WebSocket subscribers via per-subscriber asyncio
-    queues.
+    provider.
+
+    Result format (flat dict, JSON-safe):
+      game_state     (str)       — current game situation
+      threats        (list[str]) — immediate threats / opportunities
+      recommendation (str)       — single recommended action
+      confidence     (str)       — "low" | "medium" | "high"
+      timestamp      (str)       — UTC ISO-8601
 
     Subscriber model:
       - ``subscribe()``   — returns a ``Queue[dict]`` that receives results.
       - ``unsubscribe()`` — removes the queue; call in a ``finally`` block.
-      - Queues have ``maxsize=1``.  If a slow subscriber hasn't consumed the
-        previous result, the new one is silently dropped — analysis results
-        are always fresh, never backlogged.
+      - Queues have ``maxsize=1``.  Slow subscribers drop stale results.
 
     Error handling:
       - ``anthropic.AuthenticationError`` → logged once, processor stops.
@@ -37,12 +44,16 @@ class FrameProcessor:
         intake: BaseVideoIntake,
         provider: BaseAIProvider,
         interval_ms: int = 2000,
+        history_max: int = 50,
+        tts: "TTSEngine | None" = None,
     ) -> None:
         self._intake = intake
         self._provider = provider
         self._interval = interval_ms / 1000.0
+        self._tts = tts
 
         self._latest: dict[str, Any] | None = None
+        self._history: deque[dict[str, Any]] = deque(maxlen=history_max)
         self._result_lock = asyncio.Lock()
         self._subscribers: set[asyncio.Queue] = set()
         self._task: asyncio.Task | None = None
@@ -70,11 +81,14 @@ class FrameProcessor:
     # ------------------------------------------------------------------
 
     def get_latest(self) -> dict | None:
-        """Return the most-recent analysis result dict, or None."""
+        """Return the most-recent analysis result, or None."""
         return self._latest
 
+    def get_history(self) -> list[dict]:
+        """Return history list, newest entry first."""
+        return list(reversed(self._history))
+
     def subscribe(self) -> "asyncio.Queue[dict]":
-        """Register a new subscriber queue and return it."""
         q: asyncio.Queue[dict] = asyncio.Queue(maxsize=1)
         self._subscribers.add(q)
         return q
@@ -87,9 +101,7 @@ class FrameProcessor:
     # ------------------------------------------------------------------
 
     async def _loop(self) -> None:
-        logger.info(
-            "FrameProcessor started (interval=%.1fs)", self._interval
-        )
+        logger.info("FrameProcessor started (interval=%.1fs)", self._interval)
         while True:
             await asyncio.sleep(self._interval)
 
@@ -105,26 +117,31 @@ class FrameProcessor:
                     "ANTHROPIC_API_KEY is missing or invalid. "
                     "Set it in .env and restart.  Processor stopping."
                 )
-                return  # Non-recoverable — don't retry endlessly.
+                return
             except Exception:
                 logger.exception("Provider analysis failed — will retry.")
                 continue
 
+            # Merge analysis fields with timestamp into a flat result dict.
             result: dict[str, Any] = {
-                "analysis": analysis,
+                **analysis,
                 "timestamp": datetime.now(tz=timezone.utc).isoformat(),
             }
 
             async with self._result_lock:
                 self._latest = result
+                self._history.append(result)
+
+            # Speak the recommendation if TTS is enabled.
+            if self._tts and result.get("recommendation"):
+                self._tts.speak(result["recommendation"])
 
             self._notify_subscribers(result)
 
     def _notify_subscribers(self, result: dict) -> None:
-        """Push result to all subscriber queues, dropping if full."""
         for q in list(self._subscribers):
             if not q.full():
                 try:
                     q.put_nowait(result)
                 except asyncio.QueueFull:
-                    pass  # subscriber is behind — newest frame wins
+                    pass

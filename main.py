@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import IntakeMode, settings
-from engine import FrameProcessor
+from engine import FrameProcessor, TTSEngine
 from intake import BaseVideoIntake, CaptureCardIntake, PhoneBrowserIntake
 from providers.claude_vision import ClaudeVisionProvider
 
@@ -23,7 +23,15 @@ def _build_intake() -> BaseVideoIntake:
     return CaptureCardIntake(device_index=settings.CAPTURE_DEVICE_INDEX)
 
 
-def _build_processor(intake: BaseVideoIntake) -> FrameProcessor:
+def _build_tts() -> TTSEngine | None:
+    if not settings.TTS_ENABLED:
+        return None
+    tts = TTSEngine()
+    tts.start()
+    return tts
+
+
+def _build_processor(intake: BaseVideoIntake, tts: TTSEngine | None) -> FrameProcessor:
     provider = ClaudeVisionProvider(
         model=settings.CLAUDE_MODEL,
         system_prompt=settings.ANALYSIS_SYSTEM_PROMPT,
@@ -32,11 +40,14 @@ def _build_processor(intake: BaseVideoIntake) -> FrameProcessor:
         intake=intake,
         provider=provider,
         interval_ms=settings.ANALYSIS_INTERVAL_MS,
+        history_max=settings.HISTORY_MAX_ENTRIES,
+        tts=tts,
     )
 
 
 intake: BaseVideoIntake = _build_intake()
-processor: FrameProcessor = _build_processor(intake)
+tts: TTSEngine | None = _build_tts()
+processor: FrameProcessor = _build_processor(intake, tts)
 
 
 # ---------------------------------------------------------------------------
@@ -50,20 +61,22 @@ async def lifespan(app: FastAPI):
     yield
     await processor.stop()
     await intake.stop()
+    if tts:
+        tts.stop()
 
 
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Project Aegis", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Project Aegis", version="0.3.0", lifespan=lifespan)
 
 _STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 
 # ---------------------------------------------------------------------------
-# Routes — static
+# Routes — static + REST
 # ---------------------------------------------------------------------------
 
 @app.get("/", include_in_schema=False)
@@ -73,25 +86,32 @@ async def index() -> FileResponse:
 
 @app.get("/health")
 async def health() -> JSONResponse:
-    """Service liveness + current intake and analysis state."""
     frame_ts: datetime | None = intake.get_frame_timestamp()
     latest = processor.get_latest()
     return JSONResponse({
         "status": "ok",
         "intake_mode": settings.INTAKE_MODE.value,
+        "tts_enabled": settings.TTS_ENABLED,
         "latest_frame_timestamp": frame_ts.isoformat() if frame_ts else None,
-        "latest_analysis_timestamp": latest["timestamp"] if latest else None,
+        "latest_analysis_timestamp": latest.get("timestamp") if latest else None,
+        "history_count": len(processor.get_history()),
         "server_time": datetime.now(tz=timezone.utc).isoformat(),
     })
 
 
 @app.get("/analysis")
 async def analysis() -> JSONResponse:
-    """Return the most-recent AI analysis result (poll-friendly)."""
+    """Latest AI analysis result (polling-friendly)."""
     latest = processor.get_latest()
     if latest is None:
-        return JSONResponse({"analysis": None, "timestamp": None}, status_code=200)
+        return JSONResponse({"game_state": None, "threats": [], "recommendation": None, "confidence": None, "timestamp": None})
     return JSONResponse(latest)
+
+
+@app.get("/history")
+async def history() -> JSONResponse:
+    """All retained analysis results, newest first."""
+    return JSONResponse({"history": processor.get_history()})
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +123,6 @@ if settings.INTAKE_MODE == IntakeMode.PHONE:
 
     @app.websocket("/ws/intake")
     async def ws_intake(websocket: WebSocket) -> None:
-        """Accept a binary JPEG stream from the phone browser frontend."""
         await websocket.accept()
         try:
             while True:
@@ -119,21 +138,15 @@ if settings.INTAKE_MODE == IntakeMode.PHONE:
 
 @app.websocket("/ws/analysis")
 async def ws_analysis(websocket: WebSocket) -> None:
-    """Push AI analysis results to the client as they arrive.
+    """Push structured AI analysis results to the client as they arrive.
 
-    Protocol:
-      - On connect: immediately sends the latest result (if any) so the
-        client doesn't wait up to ANALYSIS_INTERVAL_MS for the first update.
-      - Subsequent messages: pushed whenever the processor completes a new
-        analysis.
-      - Every 30 s with no new result: sends {"type": "keepalive"} to
-        prevent proxy timeouts.
-      - Message format: {"analysis": str, "timestamp": ISO-8601 str}
+    On connect: immediately sends the latest cached result (if any).
+    Ongoing:    pushed whenever the processor completes a new analysis.
+    Keepalive:  {"type": "keepalive"} every 30 s to prevent proxy timeouts.
     """
     await websocket.accept()
     q = processor.subscribe()
     try:
-        # Hydrate the client immediately with whatever we have.
         latest = processor.get_latest()
         if latest:
             await websocket.send_json(latest)
