@@ -1,6 +1,9 @@
 # Environment — never commit real credentials
 .env
 
+# TLS certificates — generated locally, never commit
+certs/
+
 # Python
 __pycache__/
 *.py[cod]

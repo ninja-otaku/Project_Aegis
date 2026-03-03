@@ -5,7 +5,10 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 import anthropic
+import cv2
+import numpy as np
 
+from config import settings
 from intake.base import BaseVideoIntake
 from providers.base import BaseAIProvider
 
@@ -22,6 +25,13 @@ class FrameProcessor:
     grabs the latest frame from the intake source, and dispatches it to the AI
     provider.
 
+    Frame diff:
+      Before each API call the current frame is compared to the last one that
+      was actually sent to the provider.  If the mean absolute difference
+      (normalised to [0, 1]) is below FRAME_DIFF_THRESHOLD and
+      FRAME_DIFF_ENABLED is true, the call is skipped entirely — saving API
+      cost with no perceptible loss of quality for static or slow scenes.
+
     Result format (flat dict, JSON-safe):
       game_state     (str)       — current game situation
       threats        (list[str]) — immediate threats / opportunities
@@ -33,10 +43,6 @@ class FrameProcessor:
       - ``subscribe()``   — returns a ``Queue[dict]`` that receives results.
       - ``unsubscribe()`` — removes the queue; call in a ``finally`` block.
       - Queues have ``maxsize=1``.  Slow subscribers drop stale results.
-
-    Error handling:
-      - ``anthropic.AuthenticationError`` → logged once, processor stops.
-      - All other provider exceptions    → logged, loop continues.
     """
 
     def __init__(
@@ -57,6 +63,10 @@ class FrameProcessor:
         self._result_lock = asyncio.Lock()
         self._subscribers: set[asyncio.Queue] = set()
         self._task: asyncio.Task | None = None
+
+        # Stores the last frame that was actually sent to the AI provider,
+        # used for frame-diff comparison on the next tick.
+        self._last_analyzed_frame: np.ndarray | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -81,7 +91,6 @@ class FrameProcessor:
     # ------------------------------------------------------------------
 
     def get_latest(self) -> dict | None:
-        """Return the most-recent analysis result, or None."""
         return self._latest
 
     def get_history(self) -> list[dict]:
@@ -110,6 +119,20 @@ class FrameProcessor:
                 logger.debug("No frame available yet — skipping analysis.")
                 continue
 
+            # ── Frame diff check ──────────────────────────────────────
+            # Skip the API call when the scene hasn't changed enough.
+            # 0.02 = ~2% pixel change — tune up for fast-paced games
+            # (lots of movement), down for slow/turn-based games where
+            # even small UI changes are meaningful.
+            if settings.FRAME_DIFF_ENABLED and self._last_analyzed_frame is not None:
+                diff = _compute_diff(frame, self._last_analyzed_frame)
+                if diff < settings.FRAME_DIFF_THRESHOLD:
+                    logger.debug(
+                        "Frame diff %.4f < threshold %.4f — skipping API call.",
+                        diff, settings.FRAME_DIFF_THRESHOLD,
+                    )
+                    continue
+
             try:
                 analysis = await self._provider.analyze_frame(frame)
             except anthropic.AuthenticationError:
@@ -122,7 +145,9 @@ class FrameProcessor:
                 logger.exception("Provider analysis failed — will retry.")
                 continue
 
-            # Merge analysis fields with timestamp into a flat result dict.
+            # Record the frame we just analyzed for next-tick diff comparison.
+            self._last_analyzed_frame = frame
+
             result: dict[str, Any] = {
                 **analysis,
                 "timestamp": datetime.now(tz=timezone.utc).isoformat(),
@@ -132,7 +157,6 @@ class FrameProcessor:
                 self._latest = result
                 self._history.append(result)
 
-            # Speak the recommendation if TTS is enabled.
             if self._tts and result.get("recommendation"):
                 self._tts.speak(result["recommendation"])
 
@@ -145,3 +169,24 @@ class FrameProcessor:
                     q.put_nowait(result)
                 except asyncio.QueueFull:
                     pass
+
+
+# ---------------------------------------------------------------------------
+# Frame diff helper
+# ---------------------------------------------------------------------------
+
+def _compute_diff(a: np.ndarray, b: np.ndarray) -> float:
+    """Mean absolute difference between two frames, normalised to [0, 1].
+
+    Both frames are converted to grayscale before comparison so the metric
+    is independent of whether the intake source delivers colour or greyscale.
+    If the shapes differ (e.g. after a resolution change) b is resized to
+    match a before comparison.
+    """
+    if a.ndim == 3:
+        a = cv2.cvtColor(a, cv2.COLOR_BGR2GRAY)
+    if b.ndim == 3:
+        b = cv2.cvtColor(b, cv2.COLOR_BGR2GRAY)
+    if a.shape != b.shape:
+        b = cv2.resize(b, (a.shape[1], a.shape[0]))
+    return float(np.mean(np.abs(a.astype(np.float32) - b.astype(np.float32)))) / 255.0

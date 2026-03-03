@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import uvicorn
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -11,7 +12,9 @@ from fastapi.staticfiles import StaticFiles
 from config import IntakeMode, settings
 from engine import FrameProcessor, TTSEngine
 from intake import BaseVideoIntake, CaptureCardIntake, PhoneBrowserIntake
-from providers.claude_vision import ClaudeVisionProvider
+from providers.base import BaseAIProvider
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Factories
@@ -23,6 +26,25 @@ def _build_intake() -> BaseVideoIntake:
     return CaptureCardIntake(device_index=settings.CAPTURE_DEVICE_INDEX)
 
 
+def _build_provider() -> BaseAIProvider:
+    """Instantiate the AI provider selected by AI_PROVIDER in .env."""
+    if settings.AI_PROVIDER == "gemini":
+        from providers.gemini_vision import GeminiVisionProvider
+        return GeminiVisionProvider()
+    elif settings.AI_PROVIDER == "openai":
+        from providers.openai_vision import OpenAIVisionProvider
+        return OpenAIVisionProvider()
+    elif settings.AI_PROVIDER == "ollama":
+        from providers.ollama_vision import OllamaVisionProvider
+        return OllamaVisionProvider()
+    else:  # default: claude
+        from providers.claude_vision import ClaudeVisionProvider
+        return ClaudeVisionProvider(
+            model=settings.CLAUDE_MODEL,
+            system_prompt=settings.ANALYSIS_SYSTEM_PROMPT,
+        )
+
+
 def _build_tts() -> TTSEngine | None:
     if not settings.TTS_ENABLED:
         return None
@@ -32,13 +54,9 @@ def _build_tts() -> TTSEngine | None:
 
 
 def _build_processor(intake: BaseVideoIntake, tts: TTSEngine | None) -> FrameProcessor:
-    provider = ClaudeVisionProvider(
-        model=settings.CLAUDE_MODEL,
-        system_prompt=settings.ANALYSIS_SYSTEM_PROMPT,
-    )
     return FrameProcessor(
         intake=intake,
-        provider=provider,
+        provider=_build_provider(),
         interval_ms=settings.ANALYSIS_INTERVAL_MS,
         history_max=settings.HISTORY_MAX_ENTRIES,
         tts=tts,
@@ -69,7 +87,7 @@ async def lifespan(app: FastAPI):
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Project Aegis", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="Project Aegis", version="0.4.0", lifespan=lifespan)
 
 _STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
@@ -91,7 +109,9 @@ async def health() -> JSONResponse:
     return JSONResponse({
         "status": "ok",
         "intake_mode": settings.INTAKE_MODE.value,
+        "ai_provider": settings.AI_PROVIDER,
         "tts_enabled": settings.TTS_ENABLED,
+        "tls_enabled": settings.TLS_ENABLED,
         "latest_frame_timestamp": frame_ts.isoformat() if frame_ts else None,
         "latest_analysis_timestamp": latest.get("timestamp") if latest else None,
         "history_count": len(processor.get_history()),
@@ -138,19 +158,13 @@ if settings.INTAKE_MODE == IntakeMode.PHONE:
 
 @app.websocket("/ws/analysis")
 async def ws_analysis(websocket: WebSocket) -> None:
-    """Push structured AI analysis results to the client as they arrive.
-
-    On connect: immediately sends the latest cached result (if any).
-    Ongoing:    pushed whenever the processor completes a new analysis.
-    Keepalive:  {"type": "keepalive"} every 30 s to prevent proxy timeouts.
-    """
+    """Push structured AI analysis results to the client as they arrive."""
     await websocket.accept()
     q = processor.subscribe()
     try:
         latest = processor.get_latest()
         if latest:
             await websocket.send_json(latest)
-
         while True:
             try:
                 result = await asyncio.wait_for(q.get(), timeout=30.0)
@@ -168,9 +182,24 @@ async def ws_analysis(websocket: WebSocket) -> None:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    ssl_kwargs = {}
+    if settings.TLS_ENABLED:
+        # TLS is required for camera access on most phone browsers over a
+        # local network.  Generate certs first: python scripts/generate_cert.py
+        ssl_kwargs = {
+            "ssl_certfile": settings.TLS_CERT_PATH,
+            "ssl_keyfile": settings.TLS_KEY_PATH,
+        }
+        proto = "https"
+    else:
+        proto = "http"
+
+    logger.info("Starting Aegis on %s://0.0.0.0:%d", proto, settings.PHONE_WS_PORT)
+
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=settings.PHONE_WS_PORT,
         reload=False,
+        **ssl_kwargs,
     )

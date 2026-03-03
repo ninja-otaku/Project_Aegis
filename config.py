@@ -13,10 +13,32 @@ class Settings(BaseSettings):
     CAPTURE_DEVICE_INDEX: int = 0
     PHONE_WS_PORT: int = 8765
 
+    # ── Phone frame compression ───────────────────────────────────────────────
+    # Resize incoming phone frames to this width (aspect ratio preserved) before
+    # CLAHE and storage.  Lower = cheaper pipeline; 640 is a good default.
+    PHONE_FRAME_WIDTH: int = 640
+    # JPEG quality used when re-encoding the preprocessed frame for storage.
+    # Lower = smaller memory footprint; 70 balances quality and size.
+    PHONE_COMPRESS_QUALITY: int = 70
+
     # ── AI provider ───────────────────────────────────────────────────────────
-    # ANTHROPIC_API_KEY is read directly by the anthropic SDK from the
-    # environment; no need to declare it here.
-    CLAUDE_MODEL: str = "claude-opus-4-6"
+    # Which provider to use: claude | gemini | openai | ollama
+    AI_PROVIDER: str = "claude"
+
+    # Claude (Anthropic) — ANTHROPIC_API_KEY is read by the SDK from env
+    CLAUDE_MODEL: str = "claude-opus-4-5"
+
+    # Gemini (Google)
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-1.5-flash"
+
+    # OpenAI
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-4o-mini"
+
+    # Ollama (local, no API key required — run: ollama pull llava)
+    OLLAMA_HOST: str = "http://localhost:11434"
+    OLLAMA_MODEL: str = "llava"
 
     # How often the frame processor calls the AI provider (milliseconds).
     # Lower = more responsive, higher = cheaper.
@@ -31,12 +53,24 @@ class Settings(BaseSettings):
         "(low/medium/high). Be direct, tactical, and concise."
     )
 
+    # ── Frame diff (API cost optimization) ───────────────────────────────────
+    # Skip the AI call when the scene hasn't changed enough between frames.
+    # 0.02 = ~2% pixel change — tune up for fast-paced games (lots of motion),
+    # down for slow / turn-based games where small changes matter.
+    FRAME_DIFF_ENABLED: bool = True
+    FRAME_DIFF_THRESHOLD: float = 0.02
+
+    # ── TLS ───────────────────────────────────────────────────────────────────
+    # Enable HTTPS (required for camera access on most phone browsers).
+    # Generate certs first: python scripts/generate_cert.py
+    TLS_ENABLED: bool = False
+    TLS_CERT_PATH: str = "certs/cert.pem"
+    TLS_KEY_PATH: str = "certs/key.pem"
+
     # ── TTS ───────────────────────────────────────────────────────────────────
-    # Speak the recommendation aloud via the system TTS engine (pyttsx3).
     TTS_ENABLED: bool = False
 
     # ── History ───────────────────────────────────────────────────────────────
-    # Number of past analyses to retain in memory (accessible via GET /history).
     HISTORY_MAX_ENTRIES: int = 50
 
     model_config = SettingsConfigDict(

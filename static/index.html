@@ -242,7 +242,12 @@
 
     /* ── constants ── */
     const FRAME_INTERVAL_MS = 100;
-    const JPEG_QUALITY      = 0.72;
+    // Scale the canvas before encoding — reduces bytes sent to server.
+    // 0.5 = half resolution (e.g. 1280×720 → 640×360). Server resizes
+    // again via PHONE_FRAME_WIDTH, so this is a client-side pre-filter.
+    const CAPTURE_SCALE = 0.5;
+    // JPEG quality for WebSocket transmission. Lower = fewer bytes on the wire.
+    const JPEG_QUALITY  = 0.6;
     const MAX_HISTORY_ITEMS = 50;
 
     /* ── intake state ── */
@@ -269,16 +274,24 @@
     function sendFrame() {
       if (!intakeWs || intakeWs.readyState !== WebSocket.OPEN) return;
       if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA)  return;
-      if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+
+      // Apply CAPTURE_SCALE when setting canvas dimensions so the encoded
+      // JPEG is already downscaled before hitting the wire.
+      const scaledW = Math.round(video.videoWidth  * CAPTURE_SCALE);
+      const scaledH = Math.round(video.videoHeight * CAPTURE_SCALE);
+      if (canvas.width !== scaledW || canvas.height !== scaledH) {
+        canvas.width = scaledW; canvas.height = scaledH;
       }
-      ctx.drawImage(video, 0, 0);
+      ctx.drawImage(video, 0, 0, scaledW, scaledH);
+
       canvas.toBlob((blob) => {
         if (!blob || !intakeWs || intakeWs.readyState !== WebSocket.OPEN) return;
         blob.arrayBuffer().then((buf) => {
           intakeWs.send(buf);
           framesSent++; bytesTotal += buf.byteLength;
-          statsEl.textContent = `${framesSent} frames · ${(bytesTotal/1024).toFixed(1)} KB`;
+          // Show resolution and quality so it's easy to tune CAPTURE_SCALE / JPEG_QUALITY
+          const resLabel = `${scaledW}×${scaledH} @ Q${Math.round(JPEG_QUALITY * 100)}`;
+          statsEl.textContent = `${framesSent} frames · ${(bytesTotal/1024).toFixed(1)} KB · ${resLabel}`;
         });
       }, "image/jpeg", JPEG_QUALITY);
     }
