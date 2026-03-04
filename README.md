@@ -7,6 +7,10 @@
 
 An air-gapped AI gaming companion that observes your game from a physically separate device — no code injection, no kernel hooks, no process memory access. Works with Claude, Gemini, GPT-4o, or fully offline with Ollama.
 
+## Demo
+
+[![Project Aegis Demo](https://img.youtube.com/vi/p8fF6wMnwp8/maxresdefault.jpg)](https://youtu.be/p8fF6wMnwp8)
+
 ## How it works
 
 ```
