@@ -34,7 +34,7 @@ Because Aegis runs on a **separate machine** and only passively observes the scr
 
 | Provider | Default Model | Requires | Notes |
 |---|---|---|---|
-| `claude` | `claude-opus-4-5` | Anthropic API key | Default, best quality |
+| `claude` | `claude-opus-4-6` | Anthropic API key | Default, best quality |
 | `gemini` | `gemini-1.5-flash` | Google API key | Fast, cost-effective |
 | `openai` | `gpt-4o-mini` | OpenAI API key | Widely available |
 | `ollama` | `llava` | Ollama running locally | Free, fully offline |
@@ -170,7 +170,7 @@ To remove the browser warning entirely, install `certs/ca.pem` as a trusted CA o
 | `PHONE_COMPRESS_QUALITY` | `70` | JPEG quality for compressed frame storage |
 | `AI_PROVIDER` | `claude` | `claude` \| `gemini` \| `openai` \| `ollama` |
 | `ANTHROPIC_API_KEY` | — | Required for `claude` provider |
-| `CLAUDE_MODEL` | `claude-opus-4-5` | Claude model string |
+| `CLAUDE_MODEL` | `claude-opus-4-6` | Claude model string |
 | `GEMINI_API_KEY` | — | Required for `gemini` provider |
 | `GEMINI_MODEL` | `gemini-1.5-flash` | Gemini model string |
 | `OPENAI_API_KEY` | — | Required for `openai` provider |
